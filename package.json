@@ -1,0 +1,23 @@
+{
+  "name": "hrm",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --parallel -r run dev",
+    "build": "pnpm -r run build",
+    "lint": "pnpm -r run lint",
+    "test": "pnpm -r run test",
+    "db:migrate": "pnpm --filter api exec prisma migrate dev",
+    "db:generate": "pnpm --filter api exec prisma generate",
+    "db:seed": "pnpm --filter api exec prisma db seed",
+    "docker:up": "docker compose -f docker/docker-compose.yml up -d",
+    "docker:down": "docker compose -f docker/docker-compose.yml down"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "bcrypt",
+      "msgpackr-extract",
+      "@prisma/engines",
+      "prisma"
+    ]
+  }
+}

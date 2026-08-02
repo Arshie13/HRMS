@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: hrm-postgres
+    environment:
+      POSTGRES_USER: hrm
+      POSTGRES_PASSWORD: hrm_dev
+      POSTGRES_DB: hrm_dev
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hrm"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: hrm-redis
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

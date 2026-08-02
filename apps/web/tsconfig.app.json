@@ -1,0 +1,14 @@
+{
+  "extends": "@hrm/config/tsconfig/base",
+  "compilerOptions": {
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "outDir": "./dist",
+    "rootDir": ".",
+    "types": ["vite/client"]
+  },
+  "include": ["src"]
+}
