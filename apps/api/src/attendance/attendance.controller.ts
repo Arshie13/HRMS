@@ -69,6 +69,7 @@ export class AttendanceController {
   list(@CurrentUser() user: RequestUser, @Query() q: ListAttendanceDto) {
     return this.attendance.list(
       user.tenantId,
+      user,
       q.employeeId,
       q.dateFrom,
       q.dateTo,
@@ -81,7 +82,7 @@ export class AttendanceController {
     @CurrentUser() user: RequestUser,
     @Query('employeeId') employeeId?: string,
   ) {
-    return this.attendance.listCorrections(user.tenantId, employeeId);
+    return this.attendance.listCorrections(user.tenantId, user, employeeId);
   }
 
   @Post('corrections')

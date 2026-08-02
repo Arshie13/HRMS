@@ -7,6 +7,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Prisma } from '.prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RequestUser } from '../common/auth/request-user';
+import { isPrivileged, ownEmployeeId } from '../common/auth/self-scope';
 
 function startOfDay(d: Date): Date {
   const x = new Date(d);
@@ -71,7 +72,7 @@ export class AttendanceService {
   async clockIn(tenantId: string, user: RequestUser, employeeId?: string, ip?: string, userAgent?: string) {
     return this.prisma.withTenant(tenantId, async (tx) => {
       const emp = await this.resolveEmployee(tenantId, user, employeeId);
-      if (!emp) throw new NotFoundException('Employee not found');
+      if (!emp) throw new NotFoundException('No employee profile is linked to this account');
 
       const day = startOfDay(new Date());
       const existing = await tx.attendance.findUnique({
@@ -105,7 +106,7 @@ export class AttendanceService {
   async clockOut(tenantId: string, user: RequestUser, employeeId?: string) {
     return this.prisma.withTenant(tenantId, async (tx) => {
       const emp = await this.resolveEmployee(tenantId, user, employeeId);
-      if (!emp) throw new NotFoundException('Employee not found');
+      if (!emp) throw new NotFoundException('No employee profile is linked to this account');
 
       const day = startOfDay(new Date());
       const record = await tx.attendance.findUnique({
@@ -166,7 +167,7 @@ export class AttendanceService {
   async breakStart(tenantId: string, user: RequestUser, employeeId?: string) {
     return this.prisma.withTenant(tenantId, async (tx) => {
       const emp = await this.resolveEmployee(tenantId, user, employeeId);
-      if (!emp) throw new NotFoundException('Employee not found');
+      if (!emp) throw new NotFoundException('No employee profile is linked to this account');
       const day = startOfDay(new Date());
       const record = await tx.attendance.findUnique({
         where: {
@@ -187,7 +188,7 @@ export class AttendanceService {
   async breakEnd(tenantId: string, user: RequestUser, employeeId?: string) {
     return this.prisma.withTenant(tenantId, async (tx) => {
       const emp = await this.resolveEmployee(tenantId, user, employeeId);
-      if (!emp) throw new NotFoundException('Employee not found');
+      if (!emp) throw new NotFoundException('No employee profile is linked to this account');
       const day = startOfDay(new Date());
       const record = await tx.attendance.findUnique({
         where: {
@@ -204,11 +205,16 @@ export class AttendanceService {
 
   async list(
     tenantId: string,
+    user: RequestUser,
     employeeId?: string,
     dateFrom?: string,
     dateTo?: string,
   ) {
-    return this.prisma.withTenant(tenantId, (tx) => {
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const privileged = await isPrivileged(tx, tenantId, user);
+      if (!privileged) {
+        employeeId = (await ownEmployeeId(tx, tenantId, user)) ?? undefined;
+      }
       const where: Prisma.AttendanceWhereInput = { tenantId };
       if (employeeId) where.employeeId = employeeId;
       if (dateFrom) where.date = { ...(where.date as object), gte: new Date(dateFrom) };
@@ -228,7 +234,7 @@ export class AttendanceService {
   ) {
     return this.prisma.withTenant(tenantId, async (tx) => {
       const emp = await this.resolveEmployee(tenantId, user);
-      if (!emp) throw new NotFoundException('Employee not found');
+      if (!emp) throw new NotFoundException('No employee profile is linked to this account');
 
       let attendanceId = dto.attendanceId;
       if (!attendanceId) {
@@ -272,14 +278,18 @@ export class AttendanceService {
     });
   }
 
-  async listCorrections(tenantId: string, employeeId?: string) {
-    return this.prisma.withTenant(tenantId, (tx) =>
-      tx.attendanceCorrection.findMany({
+  async listCorrections(tenantId: string, user: RequestUser, employeeId?: string) {
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const privileged = await isPrivileged(tx, tenantId, user);
+      if (!privileged) {
+        employeeId = (await ownEmployeeId(tx, tenantId, user)) ?? undefined;
+      }
+      return tx.attendanceCorrection.findMany({
         where: { tenantId, ...(employeeId ? { employeeId } : {}) },
         include: { employee: true, attendance: true },
         orderBy: { createdAt: 'desc' },
-      }),
-    );
+      });
+    });
   }
 
   async reviewCorrection(

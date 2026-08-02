@@ -12,6 +12,8 @@ export interface UserProfile {
   tenantName: string;
   plan: string;
   isTwoFactorEnabled: boolean;
+  /** Linked Employee record (null for users without one, e.g. pure admins). */
+  employeeId: string | null;
 }
 
 interface AuthState {

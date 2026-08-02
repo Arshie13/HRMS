@@ -1,8 +1,9 @@
-import { Card, Button, Table, Tag, Space, Statistic, Row, Col, message } from 'antd';
+import { Card, Button, Table, Tag, Space, Statistic, Row, Col, Alert, message } from 'antd';
 import { ClockCircleOutlined, LogoutOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { attendanceApi, AttendanceRecord } from '../../api/attendance';
 import { useCan } from '../../utils/permissions';
+import { useAuthStore } from '../../store/auth';
 import dayjs from 'dayjs';
 
 const statusColor: Record<string, string> = {
@@ -16,6 +17,7 @@ const statusColor: Record<string, string> = {
 export function AttendancePage() {
   const queryClient = useQueryClient();
   const can = useCan();
+  const employeeId = useAuthStore((s) => s.user?.employeeId ?? null);
 
   const { data: today } = useQuery({ queryKey: ['attendance-today'], queryFn: attendanceApi.today });
   const { data: records = [], isLoading } = useQuery({ queryKey: ['attendance'], queryFn: () => attendanceApi.list() });
@@ -75,32 +77,41 @@ export function AttendancePage() {
         </Col>
         <Col span={8}>
           <Card>
-            <Space>
-              {!clockedIn && !today?.clockOut && (
-                <Button
-                  type="primary"
-                  size="large"
-                  icon={<ClockCircleOutlined />}
-                  loading={clockIn.isPending}
-                  disabled={!can('attendance', 'create')}
-                  onClick={() => clockIn.mutate(undefined)}
-                >
-                  Clock In
-                </Button>
-              )}
-              {clockedIn && (
-                <Button
-                  type="primary"
-                  size="large"
-                  icon={<LogoutOutlined />}
-                  loading={clockOut.isPending}
-                  disabled={!can('attendance', 'update')}
-                  onClick={() => clockOut.mutate(undefined)}
-                >
-                  Clock Out
-                </Button>
-              )}
-            </Space>
+            {!employeeId ? (
+              <Alert
+                type="info"
+                showIcon
+                message="No employee profile linked to this account"
+                description="Ask an admin to create/link your employee profile to use clock-in."
+              />
+            ) : (
+              <Space>
+                {!clockedIn && !today?.clockOut && (
+                  <Button
+                    type="primary"
+                    size="large"
+                    icon={<ClockCircleOutlined />}
+                    loading={clockIn.isPending}
+                    disabled={!can('attendance', 'create')}
+                    onClick={() => clockIn.mutate(undefined)}
+                  >
+                    Clock In
+                  </Button>
+                )}
+                {clockedIn && (
+                  <Button
+                    type="primary"
+                    size="large"
+                    icon={<LogoutOutlined />}
+                    loading={clockOut.isPending}
+                    disabled={!can('attendance', 'update')}
+                    onClick={() => clockOut.mutate(undefined)}
+                  >
+                    Clock Out
+                  </Button>
+                )}
+              </Space>
+            )}
           </Card>
         </Col>
       </Row>

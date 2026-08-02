@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { leaveApi, LeaveRequest } from '../../api/leaves';
 import { useCan } from '../../utils/permissions';
+import { useAuthStore } from '../../store/auth';
 
 const statusColor: Record<string, string> = {
   pending: 'orange',
@@ -16,6 +17,7 @@ const statusColor: Record<string, string> = {
 export function LeaveRequestsPage() {
   const queryClient = useQueryClient();
   const can = useCan();
+  const employeeId = useAuthStore((s) => s.user?.employeeId ?? null);
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm();
 
@@ -106,7 +108,8 @@ export function LeaveRequestsPage() {
     <Card
       title="Leave Requests"
       extra={
-        can('leaves', 'create') && (
+        can('leaves', 'create') &&
+        employeeId && (
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
             File Leave
           </Button>

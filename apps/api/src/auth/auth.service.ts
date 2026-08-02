@@ -142,12 +142,17 @@ export class AuthService {
 
     await this.logLogin(user.id, user.tenantId, email, ip, userAgent, true);
 
-    const result = await this.prisma.withTenant(user.tenantId, (tx) =>
-      this.issueSession(tx, user, user.tenantId),
-    );
+    const result = await this.prisma.withTenant(user.tenantId, async (tx) => {
+      const session = await this.issueSession(tx, user, user.tenantId);
+      const emp = await tx.employee.findFirst({
+        where: { tenantId: user.tenantId, email: user.email },
+        select: { id: true },
+      });
+      return { session, employeeId: emp?.id ?? null };
+    });
 
     return {
-      ...result,
+      ...result.session,
       user: {
         id: user.id,
         email: user.email,
@@ -159,6 +164,7 @@ export class AuthService {
         tenantName: user.tenant.name,
         plan: user.tenant.plan,
         isTwoFactorEnabled: user.isTwoFactorEnabled,
+        employeeId: result.employeeId,
       },
     };
   }
@@ -188,24 +194,32 @@ export class AuthService {
   }
 
   async me(user: RequestUser) {
-    const result = await this.prisma.withTenant(user.tenantId, (tx) =>
-      tx.user.findFirst({
+    const result = await this.prisma.withTenant(user.tenantId, async (tx) => {
+      const dbUser = await tx.user.findFirst({
         where: { id: user.userId },
         include: { tenant: true, role: true },
-      }),
-    );
-    if (!result) throw new UnauthorizedException('User not found');
+      });
+      if (!dbUser) throw new UnauthorizedException('User not found');
+      const emp = await tx.employee.findFirst({
+        where: { tenantId: user.tenantId, email: dbUser.email },
+        select: { id: true },
+      });
+      return { dbUser, employeeId: emp?.id ?? null };
+    });
+
+    const dbUser = result.dbUser;
     return {
-      id: result.id,
-      email: result.email,
-      name: result.name,
-      roleId: result.roleId,
-      roleName: result.role?.name ?? null,
-      permissions: (result.role?.permissions ?? {}) as Record<string, unknown>,
-      tenantId: result.tenantId,
-      tenantName: result.tenant.name,
-      plan: result.tenant.plan,
-      isTwoFactorEnabled: result.isTwoFactorEnabled,
+      id: dbUser.id,
+      email: dbUser.email,
+      name: dbUser.name,
+      roleId: dbUser.roleId,
+      roleName: dbUser.role?.name ?? null,
+      permissions: (dbUser.role?.permissions ?? {}) as Record<string, unknown>,
+      tenantId: dbUser.tenantId,
+      tenantName: dbUser.tenant.name,
+      plan: dbUser.tenant.plan,
+      isTwoFactorEnabled: dbUser.isTwoFactorEnabled,
+      employeeId: result.employeeId,
     };
   }
 

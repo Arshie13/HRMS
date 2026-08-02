@@ -7,6 +7,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Prisma } from '.prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RequestUser } from '../common/auth/request-user';
+import { isPrivileged, ownEmployeeId } from '../common/auth/self-scope';
 
 @Injectable()
 export class LeaveService {
@@ -53,14 +54,18 @@ export class LeaveService {
 
   // --- balances ---
 
-  async listBalances(tenantId: string, employeeId?: string) {
-    return this.prisma.withTenant(tenantId, (tx) =>
-      tx.leaveBalance.findMany({
+  async listBalances(tenantId: string, user: RequestUser, employeeId?: string) {
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const privileged = await isPrivileged(tx, tenantId, user);
+      if (!privileged) {
+        employeeId = (await ownEmployeeId(tx, tenantId, user)) ?? undefined;
+      }
+      return tx.leaveBalance.findMany({
         where: { tenantId, ...(employeeId ? { employeeId } : {}) },
         include: { employee: true, leaveType: true },
         orderBy: [{ year: 'desc' }, { leaveType: { name: 'asc' } }],
-      }),
-    );
+      });
+    });
   }
 
   private async ensureBalance(
@@ -118,7 +123,7 @@ export class LeaveService {
         : await tx.employee.findFirst({
             where: { email: user.email, tenantId },
           });
-      if (!emp) throw new NotFoundException('Employee not found');
+      if (!emp) throw new NotFoundException('No employee profile is linked to this account');
 
       const leaveType = await tx.leaveType.findFirst({
         where: { id: dto.leaveTypeId, tenantId },
@@ -200,11 +205,16 @@ export class LeaveService {
 
   async listRequests(
     tenantId: string,
+    user: RequestUser,
     employeeId?: string,
     status?: string,
   ) {
-    return this.prisma.withTenant(tenantId, (tx) =>
-      tx.leaveRequest.findMany({
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const privileged = await isPrivileged(tx, tenantId, user);
+      if (!privileged) {
+        employeeId = (await ownEmployeeId(tx, tenantId, user)) ?? undefined;
+      }
+      return tx.leaveRequest.findMany({
         where: {
           tenantId,
           ...(employeeId ? { employeeId } : {}),
@@ -212,14 +222,20 @@ export class LeaveService {
         },
         include: { employee: true, leaveType: true },
         orderBy: { createdAt: 'desc' },
-      }),
-    );
+      });
+    });
   }
 
-  async getRequest(tenantId: string, id: string) {
+  async getRequest(tenantId: string, user: RequestUser, id: string) {
     return this.prisma.withTenant(tenantId, async (tx) => {
+      const privileged = await isPrivileged(tx, tenantId, user);
+      const ownId = privileged ? null : await ownEmployeeId(tx, tenantId, user);
       const req = await tx.leaveRequest.findFirst({
-        where: { id, tenantId },
+        where: {
+          id,
+          tenantId,
+          ...(ownId ? { employeeId: ownId } : {}),
+        },
         include: { employee: true, leaveType: true },
       });
       if (!req) throw new NotFoundException('Leave request not found');

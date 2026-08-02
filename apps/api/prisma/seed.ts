@@ -36,15 +36,21 @@ function fullPermissions(): Record<string, Record<string, boolean>> {
 }
 
 function readOnlyPerms(): Record<string, Record<string, boolean>> {
-  const modules = ['employees', 'departments', 'teams', 'attendance', 'leaves', 'payroll', 'roles', 'users', 'settings'];
-  const perms: Record<string, Record<string, boolean>> = {};
-  for (const m of modules) {
-    perms[m] = { create: false, read: true, update: false, delete: false, approve: false, export: false };
-  }
-  // self-service: employees clock in/out, file & cancel their own leaves
-  perms.attendance = { create: true, read: true, update: true, delete: false, approve: false, export: false };
-  perms.leaves = { create: true, read: true, update: true, delete: false, approve: false, export: false };
-  return perms;
+  const none = { create: false, read: false, update: false, delete: false, approve: false, export: false };
+  const read = { create: false, read: true, update: false, delete: false, approve: false, export: false };
+  const self = { create: true, read: true, update: true, delete: false, approve: false, export: false };
+  return {
+    // self-service only — no tenant-wide visibility
+    employees: read,      // reads are self-scoped by the API
+    departments: read,    // org structure names only
+    teams: read,          // org structure names only
+    attendance: self,     // clock in/out, breaks, own corrections
+    leaves: self,         // file/cancel own requests, own balances
+    payroll: none,        // no salaries / periods
+    roles: none,
+    users: none,
+    settings: none,
+  };
 }
 
 async function main() {

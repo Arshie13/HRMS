@@ -50,7 +50,7 @@ export class LeaveBalancesController {
     @CurrentUser() user: RequestUser,
     @Query('employeeId') employeeId?: string,
   ) {
-    return this.leave.listBalances(user.tenantId, employeeId);
+    return this.leave.listBalances(user.tenantId, user, employeeId);
   }
 }
 
@@ -71,13 +71,13 @@ export class LeaveRequestsController {
     @Query('employeeId') employeeId?: string,
     @Query('status') status?: string,
   ) {
-    return this.leave.listRequests(user.tenantId, employeeId, status);
+    return this.leave.listRequests(user.tenantId, user, employeeId, status);
   }
 
   @Get(':id')
   @RequirePermission('leaves', 'read')
   get(@CurrentUser() user: RequestUser, @Param('id', ParseUUIDPipe) id: string) {
-    return this.leave.getRequest(user.tenantId, id);
+    return this.leave.getRequest(user.tenantId, user, id);
   }
 
   @Put(':id/approve')

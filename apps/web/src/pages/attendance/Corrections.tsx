@@ -5,12 +5,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { attendanceApi, Correction } from '../../api/attendance';
 import { useCan } from '../../utils/permissions';
+import { useAuthStore } from '../../store/auth';
 
 const statusColor: Record<string, string> = { pending: 'orange', approved: 'green', rejected: 'red' };
 
 export function CorrectionsPage() {
   const queryClient = useQueryClient();
   const can = useCan();
+  const employeeId = useAuthStore((s) => s.user?.employeeId ?? null);
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm();
 
@@ -84,7 +86,8 @@ export function CorrectionsPage() {
     <Card
       title="Attendance Corrections"
       extra={
-        can('attendance', 'create') && (
+        can('attendance', 'create') &&
+        employeeId && (
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
             File Correction
           </Button>

@@ -1,8 +1,9 @@
-import { Controller, Get, Post, Put, Delete, Param, Body, ParseUUIDPipe, Query } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Param, Body, ParseUUIDPipe, Query, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CurrentUser } from '../common/auth/current-user.decorator';
 import { RequestUser } from '../common/auth/request-user';
 import { RequirePermission } from '../common/auth/require-permission.decorator';
+import { isPrivileged, ownEmployeeId } from '../common/auth/self-scope';
 
 @Controller('employees')
 export class EmployeesController {
@@ -11,8 +12,12 @@ export class EmployeesController {
   @Get()
   @RequirePermission('employees', 'read')
   list(@CurrentUser() user: RequestUser, @Query() q: any) {
-    return this.prisma.withTenant(user.tenantId, (tx) => {
+    return this.prisma.withTenant(user.tenantId, async (tx) => {
+      const privileged = await isPrivileged(tx, user.tenantId, user);
+      const ownId = privileged ? null : await ownEmployeeId(tx, user.tenantId, user);
+
       const where: any = { tenantId: user.tenantId };
+      if (!privileged) where.id = ownId; // self-service: own profile only
       if (q.status) where.status = q.status;
       if (q.departmentId) where.departmentId = q.departmentId;
       if (q.teamId) where.teamId = q.teamId;
@@ -37,12 +42,19 @@ export class EmployeesController {
   @Get(':id')
   @RequirePermission('employees', 'read')
   get(@CurrentUser() user: RequestUser, @Param('id', ParseUUIDPipe) id: string) {
-    return this.prisma.withTenant(user.tenantId, (tx) =>
-      tx.employee.findFirstOrThrow({
+    return this.prisma.withTenant(user.tenantId, async (tx) => {
+      const privileged = await isPrivileged(tx, user.tenantId, user);
+      if (!privileged) {
+        const ownId = await ownEmployeeId(tx, user.tenantId, user);
+        if (ownId !== id) throw new NotFoundException('Employee not found');
+      }
+      const employee = await tx.employee.findFirst({
         where: { id, tenantId: user.tenantId },
         include: { department: true, team: true, documents: true, histories: { orderBy: { changedAt: 'desc' } } },
-      }),
-    );
+      });
+      if (!employee) throw new NotFoundException('Employee not found');
+      return employee;
+    });
   }
 
   @Post()
