@@ -1,6 +1,7 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { Prisma, PrismaClient } from '.prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { TenantContext } from '../common/tenant/tenant-context';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
@@ -32,5 +33,29 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       await tx.$executeRaw(Prisma.sql`SELECT set_config('app.tenant_id', ${tenantId}, true)`);
       return fn(tx);
     });
+  }
+
+  async withSettings<T>(
+    settings: Record<string, string | null>,
+    fn: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    return this.$transaction(async (tx) => {
+      for (const [key, value] of Object.entries(settings)) {
+        await tx.$executeRaw(Prisma.sql`SELECT set_config(${key}, ${value}, true)`);
+      }
+      return fn(tx);
+    });
+  }
+
+  async withCurrentTenant<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+    const tenantId = TenantContext.getTenantId();
+    if (!tenantId) {
+      throw new Error('Tenant context is not available');
+    }
+    return this.withTenant(tenantId, fn);
+  }
+
+  getTenantId(): string | undefined {
+    return TenantContext.getTenantId();
   }
 }

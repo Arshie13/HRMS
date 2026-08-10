@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { PrismaService } from '../../prisma/prisma.service';
+import { TenantContext } from '../tenant/tenant-context';
 import { RequestUser } from './request-user';
 import { PERMISSIONS_KEY, PermissionRequirement } from './require-permission.decorator';
 
@@ -27,11 +28,15 @@ export class PermissionsGuard implements CanActivate {
     const user = request.user as RequestUser | undefined;
     if (!user) throw new ForbiddenException('Missing user context');
 
-    const role = await this.prisma.withTenant(user.tenantId, (tx) =>
-      tx.role.findFirst({
-        where: { id: user.roleId ?? undefined, tenantId: user.tenantId },
-        select: { permissions: true },
-      }),
+    // Guards run before the TenantInterceptor, so establish the tenant
+    // context here to make withCurrentTenant usable during authorization.
+    const role = await TenantContext.run(user.tenantId, () =>
+      this.prisma.withCurrentTenant((tx) =>
+        tx.role.findFirst({
+          where: { id: user.roleId ?? undefined },
+          select: { permissions: true },
+        }),
+      ),
     );
 
     const matrix = (role?.permissions ?? {}) as Record<

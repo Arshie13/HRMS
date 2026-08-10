@@ -83,6 +83,7 @@ async function main() {
     await prisma.$executeRawUnsafe(`DELETE FROM "Notification" WHERE "tenantId" = '${TENANT_ID}'`);
     await prisma.$executeRawUnsafe(`DELETE FROM "Session" WHERE "tenantId" = '${TENANT_ID}'`);
     await prisma.$executeRawUnsafe(`DELETE FROM "Employee" WHERE "tenantId" = '${TENANT_ID}'`);
+    await prisma.$executeRawUnsafe(`DELETE FROM "PayrollSetting" WHERE "tenantId" = '${TENANT_ID}'`);
     await prisma.$executeRawUnsafe(`DELETE FROM "Team" WHERE "tenantId" = '${TENANT_ID}'`);
     await prisma.$executeRawUnsafe(`DELETE FROM "Department" WHERE "tenantId" = '${TENANT_ID}'`);
     await prisma.$executeRawUnsafe(`DELETE FROM "Role" WHERE "tenantId" = '${TENANT_ID}'`);
@@ -228,6 +229,21 @@ async function main() {
   });
   await prisma.leaveType.create({
     data: { tenantId: TENANT_ID, name: 'Sick Leave', code: 'SL', isPaid: true, maxDaysPerYear: 5, accrualRate: 0, maxConsecutiveDays: 5 },
+  });
+
+  // Payroll Settings (defaults match the plan: night diff 10PM-6AM @ 10%, OT multipliers per day type)
+  await prisma.payrollSetting.create({
+    data: {
+      tenantId: TENANT_ID,
+      nightDiffStart: '22:00',
+      nightDiffEnd: '06:00',
+      nightDiffRate: 0.1,
+      otRegularDay: 1.25,
+      otRestDay: 1.3,
+      otRegularHoliday: 2.0,
+      otSpecialHoliday: 1.5,
+      otRestDayHoliday: 2.6,
+    },
   });
 
   // Holidays

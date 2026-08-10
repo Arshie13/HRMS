@@ -17,6 +17,7 @@ import { PayrollPeriodDetail } from './pages/payroll/PayrollPeriodDetail';
 import { ContributionTables } from './pages/payroll/ContributionTables';
 import { TaxBrackets } from './pages/payroll/TaxBrackets';
 import { Loans } from './pages/payroll/Loans';
+import { PayrollSettings } from './pages/payroll/PayrollSettings';
 import { EmployeesLayout } from './pages/employees/EmployeesLayout';
 import { EmployeeList } from './pages/employees/EmployeeList';
 import { EmployeeForm } from './pages/employees/EmployeeForm';
@@ -93,6 +94,7 @@ function App() {
                 <Route path="contributions" element={<ContributionTables />} />
                 <Route path="tax-brackets" element={<TaxBrackets />} />
                 <Route path="loans" element={<Loans />} />
+                <Route path="settings" element={<PayrollSettings />} />
               </Route>
               <Route path="*" element={<DashboardPage />} />
             </Route>

@@ -68,7 +68,10 @@ export class AuthService {
 
   async register(dto: RegisterDto, ip?: string, userAgent?: string) {
     const slug = slugify(dto.companyName);
-    const existing = await this.prisma.tenant.findUnique({ where: { slug } });
+    const existing = await this.prisma.withSettings(
+      { 'app.auth_tenant_slug': slug },
+      (tx) => tx.tenant.findUnique({ where: { slug } }),
+    );
     if (existing) {
       throw new BadRequestException('Company name already registered');
     }
@@ -120,10 +123,14 @@ export class AuthService {
 
   async login(dto: LoginDto, ip?: string, userAgent?: string) {
     const email = dto.email.toLowerCase();
-    const user = await this.prisma.user.findUnique({
-      where: { email },
-      include: { tenant: true, role: true },
-    });
+    const user = await this.prisma.withSettings(
+      { 'app.auth_user_email': email },
+      (tx) =>
+        tx.user.findUnique({
+          where: { email },
+          include: { tenant: true, role: true },
+        }),
+    );
 
     if (!user || !(await bcrypt.compare(dto.password, user.passwordHash))) {
       await this.logLogin(null, user?.tenantId, email, ip, userAgent, false);
@@ -170,10 +177,14 @@ export class AuthService {
   }
 
   async refresh(refreshToken: string) {
-    const session = await this.prisma.session.findUnique({
-      where: { token: hashToken(refreshToken) },
-      include: { user: { include: { tenant: true } } },
-    });
+    const session = await this.prisma.withSettings(
+      { 'app.auth_session_token': hashToken(refreshToken) },
+      (tx) =>
+        tx.session.findUnique({
+          where: { token: hashToken(refreshToken) },
+          include: { user: { include: { tenant: true } } },
+        }),
+    );
     if (!session || session.expiresAt < new Date()) {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
@@ -184,11 +195,13 @@ export class AuthService {
     return { token: accessToken };
   }
 
-  async logout(userId: string, refreshToken?: string) {
+  async logout(user: RequestUser, refreshToken?: string) {
     if (refreshToken) {
-      await this.prisma.session.deleteMany({
-        where: { userId, token: hashToken(refreshToken) },
-      });
+      await this.prisma.withTenant(user.tenantId, (tx) =>
+        tx.session.deleteMany({
+          where: { userId: user.userId, token: hashToken(refreshToken) },
+        }),
+      );
     }
     return { success: true };
   }
@@ -224,45 +237,55 @@ export class AuthService {
   }
 
   async listSessions(user: RequestUser) {
-    return this.prisma.session.findMany({
-      where: { userId: user.userId, tenantId: user.tenantId },
-      select: { id: true, createdAt: true, expiresAt: true },
-      orderBy: { createdAt: 'desc' },
-    });
+    return this.prisma.withTenant(user.tenantId, (tx) =>
+      tx.session.findMany({
+        where: { userId: user.userId },
+        select: { id: true, createdAt: true, expiresAt: true },
+        orderBy: { createdAt: 'desc' },
+      }),
+    );
   }
 
   async revokeSession(user: RequestUser, sessionId: string) {
-    return this.prisma.session.deleteMany({
-      where: { id: sessionId, userId: user.userId, tenantId: user.tenantId },
-    });
+    return this.prisma.withTenant(user.tenantId, (tx) =>
+      tx.session.deleteMany({ where: { id: sessionId, userId: user.userId } }),
+    );
   }
 
   async forgotPassword(dto: ForgotPasswordDto) {
-    const user = await this.prisma.user.findUnique({
-      where: { email: dto.email.toLowerCase() },
-    });
+    const email = dto.email.toLowerCase();
+    const user = await this.prisma.withSettings(
+      { 'app.auth_user_email': email },
+      (tx) => tx.user.findUnique({ where: { email } }),
+    );
     // Do not reveal whether the account exists
     if (!user) return { message: 'If the account exists, a reset link has been sent.' };
 
     const token = randomUUID();
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1h
-    await this.prisma.passwordResetToken.create({
-      data: {
-        userId: user.id,
-        tenantId: user.tenantId,
-        tokenHash: hashToken(token),
-        expiresAt,
-      },
-    });
+    await this.prisma.withTenant(user.tenantId, (tx) =>
+      tx.passwordResetToken.create({
+        data: {
+          userId: user.id,
+          tenantId: user.tenantId,
+          tokenHash: hashToken(token),
+          expiresAt,
+        },
+      }),
+    );
 
     // TODO(step 9): send via email queue. Returned for dev convenience.
     return { message: 'If the account exists, a reset link has been sent.', resetToken: token };
   }
 
   async resetPassword(dto: ResetPasswordDto) {
-    const record = await this.prisma.passwordResetToken.findFirst({
-      where: { tokenHash: hashToken(dto.token), usedAt: null },
-    });
+    const record = await this.prisma.withSettings(
+      { 'app.auth_password_reset_token': hashToken(dto.token) },
+      (tx) =>
+        tx.passwordResetToken.findFirst({
+          where: { tokenHash: hashToken(dto.token), usedAt: null },
+        }),
+    );
     if (!record || record.expiresAt < new Date()) {
       throw new BadRequestException('Reset token is invalid or expired');
     }
@@ -285,59 +308,65 @@ export class AuthService {
   }
 
   async setupTwoFactor(user: RequestUser) {
-    const dbUser = await this.prisma.user.findFirst({
-      where: { id: user.userId, tenantId: user.tenantId },
+    return this.prisma.withTenant(user.tenantId, async (tx) => {
+      const dbUser = await tx.user.findFirst({
+        where: { id: user.userId },
+      });
+      if (!dbUser) throw new UnauthorizedException('User not found');
+
+      const secret = authenticator.generateSecret();
+      const otpauthUrl = authenticator.keyuri(dbUser.email, 'HRM', secret);
+
+      // store secret immediately so verification can run against it
+      await tx.user.update({
+        where: { id: dbUser.id },
+        data: { twoFactorSecret: secret },
+      });
+
+      const qrDataUrl = await qrcode.toDataURL(otpauthUrl);
+      return { secret, otpauthUrl, qrDataUrl };
     });
-    if (!dbUser) throw new UnauthorizedException('User not found');
-
-    const secret = authenticator.generateSecret();
-    const otpauthUrl = authenticator.keyuri(dbUser.email, 'HRM', secret);
-
-    // store secret immediately so verification can run against it
-    await this.prisma.user.update({
-      where: { id: dbUser.id },
-      data: { twoFactorSecret: secret },
-    });
-
-    const qrDataUrl = await qrcode.toDataURL(otpauthUrl);
-    return { secret, otpauthUrl, qrDataUrl };
   }
 
   async verifyTwoFactor(user: RequestUser, code: string) {
-    const dbUser = await this.prisma.user.findFirst({
-      where: { id: user.userId, tenantId: user.tenantId },
-    });
-    if (!dbUser?.twoFactorSecret) {
-      throw new BadRequestException('Two-factor not initialized');
-    }
-    const valid = authenticator.verify({
-      token: code,
-      secret: dbUser.twoFactorSecret,
-    });
-    if (!valid) throw new BadRequestException('Invalid two-factor code');
+    return this.prisma.withTenant(user.tenantId, async (tx) => {
+      const dbUser = await tx.user.findFirst({
+        where: { id: user.userId },
+      });
+      if (!dbUser?.twoFactorSecret) {
+        throw new BadRequestException('Two-factor not initialized');
+      }
+      const valid = authenticator.verify({
+        token: code,
+        secret: dbUser.twoFactorSecret,
+      });
+      if (!valid) throw new BadRequestException('Invalid two-factor code');
 
-    await this.prisma.user.update({
-      where: { id: dbUser.id },
-      data: { isTwoFactorEnabled: true },
+      await tx.user.update({
+        where: { id: dbUser.id },
+        data: { isTwoFactorEnabled: true },
+      });
+      return { success: true };
     });
-    return { success: true };
   }
 
   async disableTwoFactor(user: RequestUser, code: string) {
-    const dbUser = await this.prisma.user.findFirst({
-      where: { id: user.userId, tenantId: user.tenantId },
-    });
-    if (!dbUser?.twoFactorSecret) {
-      throw new BadRequestException('Two-factor not initialized');
-    }
-    const valid = authenticator.verify({ token: code, secret: dbUser.twoFactorSecret });
-    if (!valid) throw new BadRequestException('Invalid two-factor code');
+    return this.prisma.withTenant(user.tenantId, async (tx) => {
+      const dbUser = await tx.user.findFirst({
+        where: { id: user.userId },
+      });
+      if (!dbUser?.twoFactorSecret) {
+        throw new BadRequestException('Two-factor not initialized');
+      }
+      const valid = authenticator.verify({ token: code, secret: dbUser.twoFactorSecret });
+      if (!valid) throw new BadRequestException('Invalid two-factor code');
 
-    await this.prisma.user.update({
-      where: { id: dbUser.id },
-      data: { isTwoFactorEnabled: false, twoFactorSecret: null },
+      await tx.user.update({
+        where: { id: dbUser.id },
+        data: { isTwoFactorEnabled: false, twoFactorSecret: null },
+      });
+      return { success: true };
     });
-    return { success: true };
   }
 
   // --- internal helpers ---
@@ -391,9 +420,21 @@ export class AuthService {
     success = false,
   ) {
     try {
-      await this.prisma.loginActivity.create({
-        data: { userId, tenantId, email, ip, userAgent, success },
-      });
+      if (tenantId) {
+        await this.prisma.withTenant(tenantId, (tx) =>
+          tx.loginActivity.create({
+            data: { userId, tenantId, email, ip, userAgent, success },
+          }),
+        );
+      } else {
+        await this.prisma.withSettings(
+          { 'app.auth_user_email': email },
+          (tx) =>
+            tx.loginActivity.create({
+              data: { userId, tenantId: null, email, ip, userAgent, success },
+            }),
+        );
+      }
     } catch {
       // logging must never break auth
     }

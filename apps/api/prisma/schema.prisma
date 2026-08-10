@@ -39,6 +39,7 @@ model Tenant {
   attendanceCorrections AttendanceCorrection[]
   leaveBalances      LeaveBalance[]
   leaveRequests      LeaveRequest[]
+  payrollSettings    PayrollSetting?
 }
 
 model User {
@@ -513,4 +514,23 @@ model LeaveRequest {
   tenant    Tenant    @relation(fields: [tenantId], references: [id])
   employee  Employee  @relation(fields: [employeeId], references: [id])
   leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
+}
+
+model PayrollSetting {
+  id               String   @id @default(uuid())
+  tenantId         String   @unique
+  // Night differential window (24h "HH:mm"); end may cross midnight
+  nightDiffStart   String   @default("22:00")
+  nightDiffEnd     String   @default("06:00")
+  nightDiffRate    Float    @default(0.10)
+  // Overtime multipliers per day type
+  otRegularDay     Float    @default(1.25)
+  otRestDay        Float    @default(1.30)
+  otRegularHoliday Float    @default(2.00)
+  otSpecialHoliday Float    @default(1.50)
+  otRestDayHoliday Float    @default(2.60)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
 }

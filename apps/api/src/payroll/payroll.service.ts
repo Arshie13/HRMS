@@ -1,9 +1,26 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Prisma } from '.prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { PayrollComputationService } from './payroll-computation.service';
+import {
+  PayrollComputationService,
+  PayrollSettings,
+  OvertimeBreakdown,
+} from './payroll-computation.service';
 import { CreatePayrollPeriodDto } from './dto/create-payroll-period.dto';
 import { CreateAdjustmentDto } from './dto/adjustment.dto';
 import { PayslipGeneratorService } from './payslip-generator.service';
+
+function dateKey(d: Date): string {
+  return d.toISOString().split('T')[0];
+}
+
+const EMPTY_OVERTIME: OvertimeBreakdown = {
+  regularHours: 0,
+  restDayHours: 0,
+  regularHolidayHours: 0,
+  specialHolidayHours: 0,
+  restDayHolidayHours: 0,
+};
 
 @Injectable()
 export class PayrollService {
@@ -56,6 +73,8 @@ export class PayrollService {
       if (!period) throw new NotFoundException('Payroll period not found');
       if (period.status !== 'draft') throw new BadRequestException('Period must be in draft status to compute');
 
+      const settings = await this.computation.getSettings(tenantId, tx);
+
       const employees = await tx.employee.findMany({
         where: { tenantId, status: 'active' },
       });
@@ -63,35 +82,35 @@ export class PayrollService {
       for (const employee of employees) {
         const monthlySalary = employee.monthlySalary ?? 0;
         const dailyRate = employee.dailyRate ?? this.computation.computeDailyRate(monthlySalary);
-        const calendarDays = Math.ceil(
-          (period.endDate.getTime() - period.startDate.getTime()) / (1000 * 60 * 60 * 24),
-        ) + 1;
+
+        const { daysWorked, holidayEvents, overtimeBreakdown, nightDiffHours, yearToDateBasic } =
+          await this.collectPayrollMetrics(tx, tenantId, employee.id, period, settings);
 
         const result = await this.computation.compute(
           {
             monthlySalary,
             dailyRate,
-            daysWorked: calendarDays,
-            overtimeHours: 0,
-            overtimeMultiplier: 1.25,
-            nightDiffHours: 0,
-            holidayType: 'none',
-            holidayHoursWorked: 0,
+            daysWorked,
+            overtimeBreakdown,
+            nightDiffHours,
+            holidayEvents,
             allowances: 0,
             bonuses: 0,
+            settings,
             tenantId,
             employeeId: employee.id,
+            yearToDateBasic,
           },
           tx,
         );
 
-        await tx.payrollEntry.create({
+        const entry = await tx.payrollEntry.create({
           data: {
             payrollPeriodId: periodId,
             employeeId: employee.id,
             tenantId,
             dailyRate: result.dailyRate,
-            daysWorked: calendarDays,
+            daysWorked,
             basicPay: result.basicPay,
             overtimePay: result.overtimePay,
             nightDiffPay: result.nightDiffPay,
@@ -105,6 +124,31 @@ export class PayrollService {
             netPay: result.netPay,
           },
         });
+
+        const deductionData = [
+          { type: 'SSS', label: 'SSS', amount: result.deductions.sss },
+          { type: 'PhilHealth', label: 'PhilHealth', amount: result.deductions.philhealth },
+          { type: 'PagIBIG', label: 'Pag-IBIG', amount: result.deductions.pagibig },
+          { type: 'withholding_tax', label: 'Withholding Tax', amount: result.deductions.withholdingTax },
+        ];
+
+        if (result.deductions.loanDeductions > 0) {
+          deductionData.push({
+            type: 'loan',
+            label: 'Loan Repayment',
+            amount: result.deductions.loanDeductions,
+          });
+        }
+
+        await tx.payrollDeduction.createMany({
+          data: deductionData.map((deduction) => ({
+            payrollEntryId: entry.id,
+            tenantId,
+            type: deduction.type,
+            label: deduction.label,
+            amount: deduction.amount,
+          })),
+        });
       }
 
       return tx.payrollPeriod.update({
@@ -113,6 +157,102 @@ export class PayrollService {
         include: { entries: true },
       });
     });
+  }
+
+  private async collectPayrollMetrics(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    employeeId: string,
+    period: { startDate: Date; endDate: Date },
+    settings: PayrollSettings,
+  ) {
+    const attendanceRecords = await tx.attendance.findMany({
+      where: {
+        tenantId,
+        employeeId,
+        date: { gte: period.startDate, lte: period.endDate },
+      },
+    });
+
+    const holidays = await tx.holiday.findMany({
+      where: {
+        tenantId,
+        date: { gte: period.startDate, lte: period.endDate },
+      },
+    });
+
+    const holidayByDate = new Map<string, { type: 'regular' | 'special' }>();
+    for (const holiday of holidays) {
+      holidayByDate.set(dateKey(holiday.date), {
+        type: holiday.type as 'regular' | 'special',
+      });
+    }
+
+    const holidayEvents = holidays.map((holiday): { type: 'regular' | 'special'; worked: boolean; hoursWorked: number } => {
+      const record = attendanceRecords.find(
+        (attendance) => dateKey(attendance.date) === dateKey(holiday.date),
+      );
+      const worked = !!record && !!record.clockIn && !!record.clockOut;
+      const hoursWorked = record?.totalHours ?? 0;
+      return {
+        type: holiday.type as 'regular' | 'special',
+        worked,
+        hoursWorked,
+      };
+    });
+
+    const workedHolidayCount = holidayEvents.filter((event) => event.worked).length;
+    const presentDays = attendanceRecords.filter((record) => record.status === 'present').length;
+    const daysWorked = presentDays + workedHolidayCount;
+
+    let nightDiffHours = 0;
+    const overtimeBreakdown: OvertimeBreakdown = { ...EMPTY_OVERTIME };
+
+    for (const record of attendanceRecords) {
+      if (record.clockIn && record.clockOut) {
+        nightDiffHours += this.computation.computeNightDiffHours(
+          record.clockIn,
+          record.clockOut,
+          settings.nightDiffStart,
+          settings.nightDiffEnd,
+        );
+      }
+      const otHours = (record.overtimeMinutes ?? 0) / 60;
+      if (otHours <= 0) continue;
+      const isRestDay = record.status === 'rest_day';
+      const holiday = holidayByDate.get(dateKey(record.date));
+      if (holiday && isRestDay) {
+        overtimeBreakdown.restDayHolidayHours += otHours;
+      } else if (holiday?.type === 'regular') {
+        overtimeBreakdown.regularHolidayHours += otHours;
+      } else if (holiday?.type === 'special') {
+        overtimeBreakdown.specialHolidayHours += otHours;
+      } else if (isRestDay) {
+        overtimeBreakdown.restDayHours += otHours;
+      } else {
+        overtimeBreakdown.regularHours += otHours;
+      }
+    }
+
+    const yearStart = new Date(period.startDate.getFullYear(), 0, 1);
+    const aggregate = await tx.payrollEntry.aggregate({
+      _sum: { basicPay: true },
+      where: {
+        tenantId,
+        employeeId,
+        payrollPeriod: {
+          startDate: { gte: yearStart, lte: period.startDate },
+        },
+      },
+    });
+
+    return {
+      daysWorked,
+      holidayEvents,
+      overtimeBreakdown,
+      nightDiffHours,
+      yearToDateBasic: aggregate._sum.basicPay ?? 0,
+    };
   }
 
   async approvePeriod(tenantId: string, periodId: string) {

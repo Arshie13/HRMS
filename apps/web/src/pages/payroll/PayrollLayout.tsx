@@ -6,13 +6,16 @@ const tabs = [
   { key: '/payroll/contributions', label: 'Contributions' },
   { key: '/payroll/tax-brackets', label: 'Tax Brackets' },
   { key: '/payroll/loans', label: 'Loans' },
+  { key: '/payroll/settings', label: 'Settings' },
 ];
 
 export function PayrollLayout() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const activeKey = tabs.find((t) => location.pathname.startsWith(t.key))?.key || '/payroll';
+  const activeKey =
+    tabs.find((t) => location.pathname === t.key || location.pathname.startsWith(`${t.key}/`))?.key ||
+    '/payroll';
 
   return (
     <Card title="Payroll">
