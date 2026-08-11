@@ -64,6 +64,7 @@ describe('PayrollComputationService', () => {
         allowances: 1000,
         bonuses: 500,
         settings: DEFAULT_PAYROLL_SETTINGS,
+        scheduleType: 'monthly',
         tenantId: 'tenant-1',
         employeeId: 'employee-1',
         yearToDateBasic: 100000,
@@ -71,12 +72,133 @@ describe('PayrollComputationService', () => {
       undefined,
     );
 
-    expect(result.basicPay).toBeCloseTo(20000);
+    expect(result.basicPay).toBeCloseTo(52000);
     expect(result.overtimePay).toBeGreaterThan(0);
     expect(result.holidayPay).toBeGreaterThan(0);
     expect(result.deductions.sss).toBe(1500);
     expect(result.deductions.withholdingTax).toBeGreaterThanOrEqual(0);
     expect(result.netPay).toBeGreaterThan(0);
+  });
+
+  it('pays a fixed half-month salary and half-monthly deductions on semi-monthly periods', async () => {
+    mockPrismaService.governmentContributionTable.findFirst.mockResolvedValue({
+      employeeShare: 1500,
+    });
+    mockPrismaService.bIRTaxBracket.findFirst.mockResolvedValue({
+      baseTax: 0,
+      minAmount: 0,
+      excessPercentage: 0,
+    });
+    mockPrismaService.loan.findMany.mockResolvedValue([]);
+
+    const result = await service.compute(
+      {
+        monthlySalary: 52000,
+        dailyRate: 2000,
+        daysWorked: 10,
+        overtimeBreakdown: {
+          regularHours: 0,
+          restDayHours: 0,
+          regularHolidayHours: 0,
+          specialHolidayHours: 0,
+          restDayHolidayHours: 0,
+        },
+        nightDiffHours: 0,
+        holidayEvents: [],
+        allowances: 0,
+        bonuses: 0,
+        settings: DEFAULT_PAYROLL_SETTINGS,
+        scheduleType: 'semi-monthly',
+        periodStartDate: new Date('2026-06-01'),
+        periodEndDate: new Date('2026-06-15'),
+        tenantId: 'tenant-1',
+        employeeId: 'employee-1',
+      },
+      undefined,
+    );
+
+    expect(result.basicPay).toBeCloseTo(26000);
+    expect(result.deductions.sss).toBe(750);
+    expect(result.deductions.philhealth).toBeCloseTo(650);
+    expect(result.deductions.pagibig).toBeCloseTo(50);
+  });
+
+  it('prorates basic pay for an employee hired mid-period', async () => {
+    mockPrismaService.governmentContributionTable.findFirst.mockResolvedValue({
+      employeeShare: 1500,
+    });
+    mockPrismaService.bIRTaxBracket.findFirst.mockResolvedValue({
+      baseTax: 0,
+      minAmount: 0,
+      excessPercentage: 0,
+    });
+    mockPrismaService.loan.findMany.mockResolvedValue([]);
+
+    const result = await service.compute(
+      {
+        monthlySalary: 52000,
+        dailyRate: 2000,
+        daysWorked: 6,
+        overtimeBreakdown: {
+          regularHours: 0,
+          restDayHours: 0,
+          regularHolidayHours: 0,
+          specialHolidayHours: 0,
+          restDayHolidayHours: 0,
+        },
+        nightDiffHours: 0,
+        holidayEvents: [],
+        allowances: 0,
+        bonuses: 0,
+        settings: DEFAULT_PAYROLL_SETTINGS,
+        scheduleType: 'monthly',
+        periodStartDate: new Date('2026-06-01'),
+        periodEndDate: new Date('2026-06-30'),
+        contractStart: new Date('2026-06-11'),
+        tenantId: 'tenant-1',
+        employeeId: 'employee-1',
+      },
+      undefined,
+    );
+
+    expect(result.basicPay).toBeCloseTo(52000 * (20 / 30));
+  });
+
+  it('keeps daily-rate employees on attendance-based pay regardless of schedule', async () => {
+    mockPrismaService.governmentContributionTable.findFirst.mockResolvedValue(null);
+    mockPrismaService.bIRTaxBracket.findFirst.mockResolvedValue({
+      baseTax: 0,
+      minAmount: 0,
+      excessPercentage: 0,
+    });
+    mockPrismaService.loan.findMany.mockResolvedValue([]);
+
+    const result = await service.compute(
+      {
+        monthlySalary: 0,
+        dailyRate: 2000,
+        daysWorked: 10,
+        overtimeBreakdown: {
+          regularHours: 0,
+          restDayHours: 0,
+          regularHolidayHours: 0,
+          specialHolidayHours: 0,
+          restDayHolidayHours: 0,
+        },
+        nightDiffHours: 0,
+        holidayEvents: [],
+        allowances: 0,
+        bonuses: 0,
+        settings: DEFAULT_PAYROLL_SETTINGS,
+        scheduleType: 'semi-monthly',
+        tenantId: 'tenant-1',
+        employeeId: 'employee-1',
+      },
+      undefined,
+    );
+
+    expect(result.basicPay).toBeCloseTo(20000);
+    expect(result.deductions.sss).toBe(0);
   });
 
   describe('overtime multiplier matrix', () => {

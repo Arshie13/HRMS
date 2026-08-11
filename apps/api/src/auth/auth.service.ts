@@ -117,7 +117,23 @@ export class AuthService {
         },
       });
 
-      return this.issueSession(tx, user, tenant.id);
+      const session = await this.issueSession(tx, user, tenant.id);
+      return {
+        ...session,
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          roleId: user.roleId,
+          roleName: adminRole.name,
+          permissions: (adminRole.permissions ?? {}) as Record<string, unknown>,
+          tenantId: tenant.id,
+          tenantName: tenant.name,
+          plan: tenant.plan,
+          isTwoFactorEnabled: false,
+          employeeId: null,
+        },
+      };
     });
   }
 

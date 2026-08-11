@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Card, Form, Input, InputNumber, Select, Button, message } from 'antd';
+import { Card, Form, Input, InputNumber, Select, Segmented, Button, message } from 'antd';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../../api/client';
+
+type PayType = 'monthly' | 'daily';
 
 export function EmployeeForm() {
   const { id } = useParams();
@@ -10,18 +12,30 @@ export function EmployeeForm() {
   const [loading, setLoading] = useState(false);
   const [depts, setDepts] = useState<any[]>([]);
   const [teams, setTeams] = useState<any[]>([]);
+  const [payType, setPayType] = useState<PayType>('monthly');
   const isEdit = !!id;
 
   useEffect(() => {
     api.get('/departments').then(({ data }) => setDepts(data)).catch(() => {});
     api.get('/teams').then(({ data }) => setTeams(data)).catch(() => {});
     if (isEdit) {
-      api.get(`/employees/${id}`).then(({ data }) => form.setFieldsValue(data));
+      api.get(`/employees/${id}`).then(({ data }) => {
+        form.setFieldsValue(data);
+        if (data.monthlySalary > 0) setPayType('monthly');
+        else if (data.dailyRate > 0) setPayType('daily');
+      });
     }
   }, [id, isEdit, form]);
 
+  const onPayTypeChange = (type: PayType) => {
+    setPayType(type);
+    form.setFieldValue(type === 'monthly' ? 'dailyRate' : 'monthlySalary', undefined);
+  };
+
   const handleSubmit = async () => {
     const values = await form.validateFields();
+    if (payType === 'monthly') delete values.dailyRate;
+    else delete values.monthlySalary;
     setLoading(true);
     try {
       if (isEdit) {
@@ -63,12 +77,35 @@ export function EmployeeForm() {
         <Form.Item name="teamId" label="Team">
           <Select allowClear options={teams.map((t: any) => ({ value: t.id, label: t.name }))} />
         </Form.Item>
-        <Form.Item name="monthlySalary" label="Monthly Salary">
-          <InputNumber style={{ width: '100%' }} min={0} />
+        <Form.Item label="Compensation" style={{ marginBottom: 0 }}>
+          <Segmented
+            options={[
+              { label: 'Monthly salary', value: 'monthly' },
+              { label: 'Daily rate', value: 'daily' },
+            ]}
+            value={payType}
+            onChange={(v) => onPayTypeChange(v as PayType)}
+          />
         </Form.Item>
-        <Form.Item name="dailyRate" label="Daily Rate">
-          <InputNumber style={{ width: '100%' }} min={0} />
-        </Form.Item>
+        {payType === 'monthly' ? (
+          <Form.Item
+            name="monthlySalary"
+            label="Monthly Salary"
+            preserve={false}
+            rules={[{ required: true, message: 'Enter monthly salary' }]}
+          >
+            <InputNumber style={{ width: '100%' }} min={0} prefix="₱" />
+          </Form.Item>
+        ) : (
+          <Form.Item
+            name="dailyRate"
+            label="Daily Rate"
+            preserve={false}
+            rules={[{ required: true, message: 'Enter daily rate' }]}
+          >
+            <InputNumber style={{ width: '100%' }} min={0} prefix="₱" />
+          </Form.Item>
+        )}
         <Form.Item name="status" label="Status">
           <Select options={['active', 'probationary', 'suspended', 'on-leave', 'resigned', 'terminated']
             .map((s) => ({ value: s, label: s }))} />

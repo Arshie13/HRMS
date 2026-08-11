@@ -207,6 +207,11 @@ Go to **Payroll → Periods**.
 
 1. **Create Period** — pick start date, end date, pay date, and schedule type (semi-monthly / monthly). New periods start as **draft**.
 2. **Compute** — the system computes every active employee's entry: basic pay, OT, night diff, holiday pay, gross pay, SSS/PhilHealth/Pag-IBIG, withholding tax, loan deductions, and net pay. The period becomes **computed**.
+
+Basic pay follows the schedule:
+- **Monthly-salaried employees** get a fixed per-period amount — the full monthly salary for a **monthly** period, half for a **semi-monthly** period — prorated if they were hired or left mid-period. Attendance still drives OT, night-diff, and holiday pay.
+- **Daily-rate employees** are paid per day worked (`daily rate × days worked`).
+- Monthly government deductions (SSS, PhilHealth, Pag-IBIG) and withholding tax are split across the period's checks accordingly.
 3. **Approve** (requires `payroll:approve`) — review and approve. Period becomes **approved**.
 4. **Release** — generates payslips (PDF) for every employee. Period becomes **released**.
 

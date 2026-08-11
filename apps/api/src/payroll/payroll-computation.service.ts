@@ -51,6 +51,11 @@ export interface ComputationInput {
   bonuses: number;
   yearToDateBasic?: number;
   settings?: PayrollSettings;
+  scheduleType?: 'semi-monthly' | 'monthly';
+  periodStartDate?: Date;
+  periodEndDate?: Date;
+  contractStart?: Date | null;
+  contractEnd?: Date | null;
 }
 
 export interface DeductionResult {
@@ -83,6 +88,38 @@ export class PayrollComputationService {
 
   computeBasicPay(dailyRate: number, daysWorked: number): number {
     return dailyRate * daysWorked;
+  }
+
+  computeFixedBasicPay(
+    monthlySalary: number,
+    periodsPerMonth: number,
+    periodStart?: Date,
+    periodEnd?: Date,
+    contractStart?: Date | null,
+    contractEnd?: Date | null,
+  ): number {
+    const fixedPay = monthlySalary / periodsPerMonth;
+    return fixedPay * this.employmentRatio(periodStart, periodEnd, contractStart, contractEnd);
+  }
+
+  /**
+   * Fraction of the period the employee was employed, based on contract
+   * start/end dates. Returns 1 when no contract dates are set or the contract
+   * fully covers the period.
+   */
+  employmentRatio(
+    periodStart?: Date,
+    periodEnd?: Date,
+    contractStart?: Date | null,
+    contractEnd?: Date | null,
+  ): number {
+    if (!periodStart || !periodEnd) return 1;
+    const start = contractStart && contractStart > periodStart ? contractStart : periodStart;
+    const end = contractEnd && contractEnd < periodEnd ? contractEnd : periodEnd;
+    if (start > end) return 0;
+    const periodDays = Math.floor((periodEnd.getTime() - periodStart.getTime()) / 86400000) + 1;
+    const employedDays = Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
+    return Math.max(0, Math.min(1, employedDays / periodDays));
   }
 
   computeOvertimePay(
@@ -292,6 +329,8 @@ export class PayrollComputationService {
     input: ComputationInput & { tenantId: string; employeeId: string },
     tx?: Prisma.TransactionClient,
   ): Promise<ComputationResult> {
+    const periodsPerMonth = input.scheduleType === 'semi-monthly' ? 2 : 1;
+
     const dailyRate = input.monthlySalary > 0
       ? this.computeDailyRate(input.monthlySalary)
       : input.dailyRate;
@@ -306,7 +345,16 @@ export class PayrollComputationService {
       restDayHolidayHours: 0,
     };
 
-    const basicPay = this.computeBasicPay(dailyRate, input.daysWorked);
+    const basicPay = input.monthlySalary > 0
+      ? this.computeFixedBasicPay(
+          input.monthlySalary,
+          periodsPerMonth,
+          input.periodStartDate,
+          input.periodEndDate,
+          input.contractStart,
+          input.contractEnd,
+        )
+      : this.computeBasicPay(dailyRate, input.daysWorked);
     const overtimePay = this.computeOvertimePayBreakdown(dailyRate, breakdown, settings);
     const nightDiffPay = this.computeNightDiffPay(dailyRate, input.nightDiffHours, settings.nightDiffRate);
     const holidayPay = this.computeHolidayPay(dailyRate, input.holidayEvents);
@@ -319,19 +367,25 @@ export class PayrollComputationService {
       bonuses: input.bonuses ?? 0,
     });
 
-    const sss = await this.computeSSS(input.tenantId, input.monthlySalary, tx);
-    const philhealth = this.computePhilHealth(input.monthlySalary);
-    const pagibig = this.computePagIBIG(input.monthlySalary);
+    const sssMonthly = await this.computeSSS(input.tenantId, input.monthlySalary, tx);
+    const philhealthMonthly = this.computePhilHealth(input.monthlySalary);
+    const pagibigMonthly = this.computePagIBIG(input.monthlySalary);
 
-    const thirteenthMonthExemption = 90000;
+    const sss = sssMonthly / periodsPerMonth;
+    const philhealth = philhealthMonthly / periodsPerMonth;
+    const pagibig = pagibigMonthly / periodsPerMonth;
+
+    const thirteenthMonthExemptionMonthly = 90000 / 12;
     const ytdBasic = input.yearToDateBasic ?? basicPay;
     const thirteenthMonthPay = this.computeThirteenthMonth(ytdBasic);
-    const taxableIncome = Math.max(
+    const exemptMonthly = Math.min(thirteenthMonthPay, thirteenthMonthExemptionMonthly);
+    const monthlyEquivTaxable = Math.max(
       0,
-      grossPay - sss - philhealth - pagibig - Math.min(thirteenthMonthPay, thirteenthMonthExemption),
+      grossPay * periodsPerMonth - sssMonthly - philhealthMonthly - pagibigMonthly - exemptMonthly,
     );
 
-    const withholdingTax = await this.computeWithholdingTax(input.tenantId, taxableIncome, tx);
+    const monthlyTax = await this.computeWithholdingTax(input.tenantId, monthlyEquivTaxable, tx);
+    const withholdingTax = monthlyTax / periodsPerMonth;
     const loanDeductions = await this.computeLoanDeductions(input.employeeId, input.tenantId, tx);
 
     const totalDeductions = sss + philhealth + pagibig + withholdingTax + loanDeductions;

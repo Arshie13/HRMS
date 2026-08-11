@@ -100,6 +100,11 @@ export class PayrollService {
             tenantId,
             employeeId: employee.id,
             yearToDateBasic,
+            scheduleType: period.scheduleType as 'semi-monthly' | 'monthly',
+            periodStartDate: period.startDate,
+            periodEndDate: period.endDate,
+            contractStart: employee.contractStart,
+            contractEnd: employee.contractEnd,
           },
           tx,
         );
