@@ -34,6 +34,9 @@ export const rbacApi = {
 
   listUsers: () => api.get<UserRow[]>('/users').then((r) => r.data),
 
+  createUser: (data: { email: string; name?: string; password: string; roleId?: string }) =>
+    api.post<UserRow>('/users', data).then((r) => r.data),
+
   assignRole: (userId: string, roleId: string) =>
     api.put<UserRow>(`/users/${userId}/role`, { roleId }).then((r) => r.data),
 };
